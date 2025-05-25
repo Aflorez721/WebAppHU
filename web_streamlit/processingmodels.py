@@ -141,7 +141,7 @@ def generate_forecast_and_metrics(input_file):
     df_features_pronostico = check_and_create_missing_month_columns(df_features_tmp)
 
     #-- Aplicar la función de bandas de suavizado
-    df_features_pronostico = smoothing_bands(df_features_pronostico, alpha=0.1)
+    df_features_pronostico = smoothing_bands_iqr(df_features_pronostico)
 
     # forecast con control de pronosticos si stock en cero reemplazar por mediana  y pronostico pasa banda superior se reemplanza con mediana
 
@@ -185,13 +185,29 @@ def generate_forecast_and_metrics(input_file):
     df_pronosticos['cantidad_pronostico'] = np.where(df_pronosticos['cantidad_pronostico'] > df_pronosticos['upper_bound'], df_pronosticos['mediana'], df_pronosticos['cantidad_pronostico'])
     df_pronosticos['cantidad_pronostico'] = df_pronosticos['cantidad_pronostico'].round().astype(int)
 
+    #----------------------------------------------------------------------------------------------------
+    #                                            PROCESO PARA ARTICULOS DE BAJA DEMANDA
+    #----------------------------------------------------------------------------------------------------
+    #-- Filtrar los artículos con baja demanda
+    list_low_dda = df_resultados_finales[df_resultados_finales['Mensaje'] == 'Datos insuficientes']['codigoarticulo'].tolist()
+    low_dda = df[df['codigoarticulo'].isin(list_low_dda)]
+    low_dda = low_dda[['codigoarticulo', 'fecha', 'cantidad']]
+
+    #-- Guardar datos pronósticados
+    # Create models
+    results = create_sma_models(low_dda, window_size=2, forecast_periods=6)
+    results_low_dda = pd.DataFrame(results['forecasts']) 
+    results_low_dda = results_low_dda[['codigoarticulo', 'fecha', 'cantidad_pronostico']]
+    df_pronosticosff = pd.concat([df_pronosticos, results_low_dda], ignore_index=True)
+    df_pronosticosff['cantidad_pronostico'] = np.where(df_pronosticosff['cantidad_pronostico'] < 0, 0, df_pronosticosff['cantidad_pronostico'])
+    #----------------------------------------------------------------------------------------------------
 
 
     # Guardar los resultados en archivos
     forecast_file = "output_forecast.xlsx"
     metrics_file = "output_metrics.xlsx"
 
-    df_pronosticos.to_excel(forecast_file, index=False)
+    df_pronosticosff.to_excel(forecast_file, index=False)
     #-- Almacenamiento de las metricas de desempeño en los diferentes modelos
     df_resultados_finales.to_excel(metrics_file, index=False)
     ##return forecast_file, metrics_file

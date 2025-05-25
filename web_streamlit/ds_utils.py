@@ -18,6 +18,12 @@ try:
     from joblib import Parallel, delayed, dump, load
     import matplotlib.pyplot as plt
     import seaborn as sns
+    from typing import Dict, Union
+
+    from functools import partial
+    from utilsforecast.evaluation import evaluate
+    from utilsforecast.losses import mape, mase, mse, smape
+
 except Exception as e:
     print(f"Error importing libraries: {e}")
 
@@ -56,13 +62,39 @@ def mediana_rolling(df, window=6):
 
     return df
 
-def smoothing_bands(df, alpha):
-    """
-    Creation of smoothing bands for the forecast to control the forecast
+#def smoothing_bands(df, alpha):
+#    """
+#    Creation of smoothing bands for the forecast to control the forecast
+#
+#    """
+#    df['lower_bound'] = df['mediana'] - (df['mediana'] * alpha)
+#    df['upper_bound'] = df['mediana'] + (df['mediana'] * alpha)
+#    return df
 
+def smoothing_bands_iqr(df, iqr_multiplier=1.5):
     """
-    df['lower_bound'] = df['mediana'] - (df['mediana'] * alpha)
-    df['upper_bound'] = df['mediana'] + (df['mediana'] * alpha)
+    Creates statistically robust smoothing bands for forecasts using IQR (Interquartile Range).
+    
+    Parameters:
+        df (pd.DataFrame): Input data containing 'mediana' column
+        iqr_multiplier (float): Multiplier for IQR range (default: 1.5)
+        
+    Returns:
+        pd.DataFrame: Original DataFrame with added 'lower_bound' and 'upper_bound' columns
+    """
+    # Calculate IQR statistics
+    Q1 = df['mediana'].quantile(0.25)
+    Q3 = df['mediana'].quantile(0.75)
+    IQR = Q3 - Q1
+    
+    # Create bounds
+    df['lower_bound'] = df['mediana'] - (iqr_multiplier * IQR)
+    df['upper_bound'] = df['mediana'] + (iqr_multiplier * IQR)
+    
+    # Ensure non-negative bounds for positive data
+    if (df['mediana'] >= 0).all():
+        df['lower_bound'] = df['lower_bound'].clip(lower=0)
+    
     return df
 
 # Función de creación de caracteristicas
@@ -116,8 +148,6 @@ def check_and_create_missing_month_columns(df):
     return df
 
 
-
-
 def guardar_mejor_modelo(modelo, codigoarticulo):
     """
     Guarda el modelo entrenado en un archivo .joblib en la carpeta modelos_guardados.
@@ -145,7 +175,11 @@ def evaluate_model(model, X_train, y_train, X_test, y_test):
 def process_articulo(articulo, data, features, target, preprocessor, tscv):
     df_art = data[data['codigoarticulo'] == articulo].copy().reset_index(drop=True)
 
+    
     if len(df_art) < 18:
+        # Si no hay suficientes datos, devolver un mensaje
+        
+        #-- Guardar el modelo
         return {'codigoarticulo': articulo, 'Mensaje': 'Datos insuficientes'}
 
     train_size = int(len(df_art) * 0.85)
@@ -368,3 +402,222 @@ def plot_modelos_articulos(df, articulo_ejemplo):
       plt.xticks(rotation=45)
       plt.tight_layout()
       plt.show()
+
+###-- Función para crear el DataFrame de entrada para los modelos de series de tiempo
+# low Dda
+
+#def create_sma_models(
+#    data: pd.DataFrame,
+#    window_size: int = 3,
+#    forecast_periods: int = 1,
+#    min_data_points: int = 5
+#) -> Dict[str, Union[pd.DataFrame, dict]]:
+#    """
+#    Creates SMA models for each unique 'codigoarticulo' in the dataset.
+#    
+#    Parameters:
+#    -----------
+#    data : pd.DataFrame
+#        Input dataframe containing columns: 'codigoarticulo', 'fecha', 'cantidad'
+#    window_size : int, optional
+#        Number of periods to include in the moving average calculation (default: 3)
+#    forecast_periods : int, optional
+#        Number of future periods to forecast (default: 1)
+#    min_data_points : int, optional
+#        Minimum data points required to build a model (default: 5)
+#    
+#    Returns:
+#    --------
+#    dict
+#        A dictionary containing:
+#        - 'models': Dictionary of SMA models (one per codigoarticulo)
+#        - 'forecasts': DataFrame with forecasts for each article
+#        - 'stats': Summary statistics for each model
+#    """
+#    
+#    # Validate input data
+#    required_cols = {'codigoarticulo', 'fecha', 'cantidad'}
+#    if not required_cols.issubset(data.columns):
+#        raise ValueError(f"Input data must contain columns: {required_cols}")
+#    
+#    # Convert fecha to datetime if not already
+#    data['fecha'] = pd.to_datetime(data['fecha'])
+#    
+#    # Sort data by fecha for each article
+#    data = data.sort_values(['codigoarticulo', 'fecha'])
+#    
+#    # Initialize output containers
+#    models = {}
+#    forecasts = []
+#    stats = []
+#    
+#    # Process each article separately
+#    for codigo, group in data.groupby('codigoarticulo'):
+#        # Check if we have enough data
+#        if len(group) < min_data_points:
+#            print(f"Warning: Not enough data for article {codigo} (only {len(group)} points)")
+#            continue
+#        
+#        # Create time series
+#        ts = group.set_index('fecha')['cantidad']
+#        
+#        # Calculate SMA
+#        sma = ts.rolling(window=window_size, min_periods=1).mean()
+#        
+#        # Store model
+#        models[codigo] = {
+#            'window_size': window_size,
+#            'last_values': ts.tail(window_size).values,
+#            'last_date': ts.index[-1],
+#            'n_observations': len(ts)
+#        }
+#        
+#        # Generate forecasts
+#        last_sma = sma.iloc[-1]
+#        forecast_dates = pd.date_range(
+#            start=ts.index[-1] + pd.DateOffset(months=1),
+#            periods=forecast_periods,
+#            freq='MS'
+#        )
+#        
+#        for i, date in enumerate(forecast_dates, 1):
+#            forecasts.append({
+#                'codigoarticulo': codigo,
+#                'fecha': date,
+#                'cantidad_pronostico': last_sma,
+#                'forecast_period': i,
+#                'model': 'SMA',
+#                'window_size': window_size
+#            })
+#        
+#        # Calculate statistics
+#        stats.append({
+#            'codigoarticulo': codigo,
+#            'mean': ts.mean(),
+#            'std': ts.std(),
+#            'min': ts.min(),
+#            'max': ts.max(),
+#            'last_value': ts.iloc[-1],
+#            'sma_value': last_sma,
+#            'n_observations': len(ts)
+#        })
+#    
+#    # Convert forecasts to DataFrame
+#    forecast_df = pd.DataFrame(forecasts)
+#    
+#    # Convert stats to DataFrame
+#    stats_df = pd.DataFrame(stats)
+#    
+#    return {
+#        'models': models,
+#        'forecasts': forecast_df,
+#        'stats': stats_df
+#    }
+
+
+from typing import Dict, Union
+from pandas.tseries.offsets import MonthBegin
+
+def create_sma_models(
+    data: pd.DataFrame,
+    window_size: int = 3,
+    forecast_periods: int = 1,
+    min_data_points: int = 5,
+    freq: str = 'MS'  # Month Start by default
+) -> Dict[str, Union[pd.DataFrame, dict]]:
+    """
+    Creates SMA models for each unique 'codigoarticulo' with MONTHLY forecasting.
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        Input dataframe containing columns: 'codigoarticulo', 'fecha', 'cantidad'
+    window_size : int, optional
+        Number of MONTHLY periods for moving average (default: 3)
+    forecast_periods : int, optional
+        Number of future MONTHS to forecast (default: 1)
+    min_data_points : int, optional
+        Minimum monthly data points required (default: 5)
+    freq : str, optional
+        Frequency for date range ('MS' for month start, 'M' for month end)
+    
+    Returns:
+    --------
+    dict
+        A dictionary containing:
+        - 'models': Dictionary of SMA models
+        - 'forecasts': DataFrame with monthly forecasts
+        - 'stats': Summary statistics
+    """
+    
+    # Validate input data
+    required_cols = {'codigoarticulo', 'fecha', 'cantidad'}
+    if not required_cols.issubset(data.columns):
+        raise ValueError(f"Input data must contain columns: {required_cols}")
+    
+    # Convert and ensure monthly data
+    data['fecha'] = pd.to_datetime(data['fecha'])
+    data = data.sort_values(['codigoarticulo', 'fecha'])
+    
+    # Initialize outputs
+    models = {}
+    forecasts = []
+    stats = []
+    
+    for codigo, group in data.groupby('codigoarticulo'):
+        # Check data sufficiency
+        if len(group) < min_data_points:
+            print(f"Warning: Insufficient monthly data for {codigo} ({len(group)} < {min_data_points})")
+            continue
+        
+        # Resample to monthly frequency if needed
+        ts = (group.set_index('fecha')['cantidad']
+                .resample('MS').mean())  # or .sum() depending on your needs
+        
+        # Calculate SMA
+        sma = ts.rolling(window=window_size, min_periods=1).mean()
+        
+        # Store model
+        models[codigo] = {
+            'window_size': window_size,
+            'last_values': ts.tail(window_size).values,
+            'last_date': ts.index[-1],
+            'n_observations': len(ts),
+            'frequency': 'monthly'
+        }
+        
+        # Generate monthly forecasts
+        forecast_dates = pd.date_range(
+            start=ts.index[-1] + MonthBegin(1),
+            periods=forecast_periods,
+            freq=freq
+        )
+        
+        forecasts.extend({
+            'codigoarticulo': codigo,
+            'fecha': date,
+            'cantidad_pronostico': last_sma,
+            'forecast_period': i,
+            'model': 'SMA',
+            'window_size': window_size,
+            'frequency': 'monthly'
+        } for i, (date, last_sma) in enumerate(zip(forecast_dates, [sma.iloc[-1]]*forecast_periods), 1))
+        
+        # Calculate statistics
+        stats.append({
+            'codigoarticulo': codigo,
+            'mean': ts.mean(),
+            'std': ts.std(),
+            'min': ts.min(),
+            'max': ts.max(),
+            'last_value': ts.iloc[-1],
+            'sma_value': sma.iloc[-1],
+            'n_observations': len(ts),
+            'window_size': window_size
+        })
+    
+    return {
+        'models': models,
+        'forecasts': pd.DataFrame(forecasts),
+        'stats': pd.DataFrame(stats)
+    }
